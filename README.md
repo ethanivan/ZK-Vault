@@ -1,110 +1,273 @@
-# FHEVM Hardhat Template
+# ZK Vault
 
-A Hardhat-based template for developing Fully Homomorphic Encryption (FHE) enabled Solidity smart contracts using the
-FHEVM protocol by Zama.
+ZK Vault is a confidential staking vault for cUSDT on the Zama FHEVM. Users stake a token amount that stays encrypted on-chain, choose a lock duration, and withdraw only after the unlock time.
 
-## Quick Start
+## Overview
 
-For detailed instructions see:
-[FHEVM Hardhat Quick Start Tutorial](https://docs.zama.ai/protocol/solidity-guides/getting-started/quick-start-tutorial)
+ZK Vault combines a confidential ERC7984 token (cUSDT) with a vault contract that accepts encrypted transfers and enforces time locks. The vault never stores plaintext amounts. The UI decrypts balances locally using the Zama relayer SDK and an EIP-712 signature.
 
-### Prerequisites
+## Problem It Solves
 
-- **Node.js**: Version 20 or higher
-- **npm or yarn/pnpm**: Package manager
+On-chain staking typically exposes balances and amounts, which leaks user strategy and liquidity data. ZK Vault keeps stake amounts confidential while still enforcing lockup and withdrawal rules on-chain.
 
-### Installation
+## Goals
 
-1. **Install dependencies**
+- Keep stake amounts encrypted end-to-end on-chain.
+- Enforce lock durations with on-chain logic only.
+- Provide a simple staking flow in both CLI and UI.
+- Keep contract read functions deterministic and explicit (no hidden sender dependencies).
 
-   ```bash
-   npm install
-   ```
+## Non-Goals
 
-2. **Set up environment variables**
+- Yield generation or reward distribution.
+- Multi-token or multi-position vaults per user.
+- Mainnet-grade economic security (this is a demo system).
 
-   ```bash
-   npx hardhat vars set MNEMONIC
+## Key Advantages
 
-   # Set your Infura API key for network access
-   npx hardhat vars set INFURA_API_KEY
+- Confidentiality: stake amounts are stored as encrypted euint64 values.
+- Simple staking model: one active position per address with accumulation.
+- Deterministic unlock: withdrawal only after the unlock timestamp.
+- Minimal trust: no privileged admin paths in the vault.
+- Clean integration: contracts, tasks, tests, and UI are wired together.
 
-   # Optional: Set Etherscan API key for contract verification
-   npx hardhat vars set ETHERSCAN_API_KEY
-   ```
+## How It Works
 
-3. **Compile and test**
+1. cUSDT is an ERC7984 confidential token. Minting converts cleartext to encrypted euint64.
+2. Users stake using `confidentialTransferAndCall` on cUSDT, passing:
+   - encrypted amount handle
+   - Zama proof bytes
+   - ABI-encoded lock duration in seconds
+3. The vault receives the callback, checks sender is cUSDT, validates duration, and stores:
+   - encrypted amount
+   - unlock timestamp
+   - active flag
+4. If a user stakes again, the vault:
+   - adds encrypted amounts together
+   - extends the unlock time if the new lock is longer
+5. After the unlock timestamp, `withdraw()` transfers the encrypted amount back.
 
-   ```bash
-   npm run compile
-   npm run test
-   ```
+## Contracts
 
-4. **Deploy to local network**
+### `ConfidentialUSDT`
 
-   ```bash
-   # Start a local FHEVM-ready node
-   npx hardhat node
-   # Deploy to local network
-   npx hardhat deploy --network localhost
-   ```
+- ERC7984 token with encrypted balances.
+- `mint(address,uint64)` for test/demo mints only.
+- Acts as the transfer gateway for the vault.
 
-5. **Deploy to Sepolia Testnet**
+### `ZKVault`
 
-   ```bash
-   # Deploy to Sepolia
-   npx hardhat deploy --network sepolia
-   # Verify contract on Etherscan
-   npx hardhat verify --network sepolia <CONTRACT_ADDRESS>
-   ```
+- Accepts `confidentialTransferAndCall` callbacks from cUSDT.
+- Stores the encrypted amount as `euint64`.
+- One active stake per account; subsequent stakes accumulate.
+- Unlock is enforced by `block.timestamp`.
+- `getStake(address)` is explicit and does not depend on `msg.sender`.
 
-6. **Test on Sepolia Testnet**
+### `FHECounter`
 
-   ```bash
-   # Once deployed, you can run a simple test on Sepolia.
-   npx hardhat test --network sepolia
-   ```
+Legacy sample contract left in the repo for reference and testing patterns.
 
-## 📁 Project Structure
+## Frontend
 
+The UI lives in `ui/` and targets Sepolia only.
+
+- Wallet connection: RainbowKit + wagmi.
+- Read calls: viem.
+- Write calls: ethers v6.
+- Confidential decryption: Zama relayer SDK.
+- Storage: in-memory only (no local storage).
+- Network: Sepolia RPC only.
+
+Core UI flows:
+
+- Enter cUSDT and vault addresses.
+- Mint demo cUSDT to the connected wallet.
+- Stake encrypted cUSDT with a lock duration.
+- Decrypt and display wallet balance and staked amount.
+- Withdraw after unlock.
+
+## Tech Stack
+
+- Smart contracts: Solidity 0.8.27, Hardhat, hardhat-deploy
+- FHE tooling: @fhevm/solidity, @fhevm/hardhat-plugin
+- Confidential token standard: ERC7984 (OpenZeppelin confidential contracts)
+- Frontend: React + Vite + TypeScript
+- Wallet/chain: wagmi, viem, RainbowKit
+- Write layer: ethers v6
+- Relayer: @zama-fhe/relayer-sdk
+- Tests: mocha, chai, hardhat network helpers
+
+## Repository Layout
+
+- `contracts/` smart contracts
+- `deploy/` deployment scripts
+- `tasks/` Hardhat CLI tasks
+- `test/` unit and integration tests
+- `ui/` frontend app
+- `scripts/` developer utilities
+- `docs/` Zama documentation references
+
+## Prerequisites
+
+- Node.js 20+
+- npm 7+
+- Sepolia ETH for deployment and testing
+
+## Environment Configuration
+
+Create a `.env` in the repo root with:
+
+- `PRIVATE_KEY` (private key only, no mnemonic)
+- `INFURA_API_KEY`
+- `ETHERSCAN_API_KEY` (optional)
+
+The frontend does not use environment variables.
+
+## Local Development
+
+Install dependencies:
+
+```bash
+npm install
 ```
-fhevm-hardhat-template/
-├── contracts/           # Smart contract source files
-│   └── FHECounter.sol   # Example FHE counter contract
-├── deploy/              # Deployment scripts
-├── tasks/               # Hardhat custom tasks
-├── test/                # Test files
-├── hardhat.config.ts    # Hardhat configuration
-└── package.json         # Dependencies and scripts
+
+Compile contracts:
+
+```bash
+npm run compile
 ```
 
-## 📜 Available Scripts
+Run tests (local FHEVM mock):
 
-| Script             | Description              |
-| ------------------ | ------------------------ |
-| `npm run compile`  | Compile all contracts    |
-| `npm run test`     | Run all tests            |
-| `npm run coverage` | Generate coverage report |
-| `npm run lint`     | Run linting checks       |
-| `npm run clean`    | Clean build artifacts    |
+```bash
+npm run test
+```
 
-## 📚 Documentation
+Start a local Hardhat node for contract work:
 
-- [FHEVM Documentation](https://docs.zama.ai/fhevm)
-- [FHEVM Hardhat Setup Guide](https://docs.zama.ai/protocol/solidity-guides/getting-started/setup)
-- [FHEVM Testing Guide](https://docs.zama.ai/protocol/solidity-guides/development-guide/hardhat/write_test)
-- [FHEVM Hardhat Plugin](https://docs.zama.ai/protocol/solidity-guides/development-guide/hardhat)
+```bash
+npm run chain
+```
 
-## 📄 License
+Deploy contracts to local node:
 
-This project is licensed under the BSD-3-Clause-Clear License. See the [LICENSE](LICENSE) file for details.
+```bash
+npm run deploy:localhost
+```
 
-## 🆘 Support
+Note: the UI is configured for Sepolia only, so local node testing is CLI/test focused.
 
-- **GitHub Issues**: [Report bugs or request features](https://github.com/zama-ai/fhevm/issues)
-- **Documentation**: [FHEVM Docs](https://docs.zama.ai)
-- **Community**: [Zama Discord](https://discord.gg/zama)
+## Sepolia Deployment
 
----
+Deploy to Sepolia (after tests pass locally):
 
-**Built with ❤️ by the Zama team**
+```bash
+npm run deploy:sepolia
+```
+
+Verify on Etherscan:
+
+```bash
+npm run verify:sepolia <CONTRACT_ADDRESS>
+```
+
+## Sync Contract ABI and Addresses to UI
+
+The UI ABI must be derived from the deployed contracts in `deployments/sepolia`.
+
+Run:
+
+```bash
+npx ts-node scripts/sync-ui-contracts.ts
+```
+
+This updates:
+
+- `ui/src/config/contracts.ts`
+- default cUSDT and vault addresses
+- ABI definitions for the UI
+
+## Hardhat Tasks
+
+Print deployed addresses:
+
+```bash
+npx hardhat task:zkvault:addresses --network sepolia
+```
+
+Mint demo cUSDT:
+
+```bash
+npx hardhat task:zkvault:mint --network sepolia --to <ADDRESS> --amount <UINT64>
+```
+
+Stake with lock duration:
+
+```bash
+npx hardhat task:zkvault:stake --network sepolia --amount <UINT64> --lock <SECONDS>
+```
+
+Read and decrypt your position:
+
+```bash
+npx hardhat task:zkvault:position --network sepolia
+```
+
+Withdraw after unlock:
+
+```bash
+npx hardhat task:zkvault:withdraw --network sepolia
+```
+
+## Frontend Usage
+
+Install UI dependencies:
+
+```bash
+cd ui
+npm install
+```
+
+Start the UI:
+
+```bash
+npm run dev
+```
+
+In the UI:
+
+- Connect a wallet on Sepolia.
+- Paste the cUSDT and vault addresses.
+- Mint demo cUSDT.
+- Stake with a lock duration.
+- Wait for unlock and withdraw.
+
+## Limitations and Known Constraints
+
+- Only one active stake per address.
+- Withdraw is all-or-nothing.
+- Lock duration is cleartext; amount is encrypted.
+- Amounts are limited to uint64.
+- No reward logic or yield strategy.
+- No audit; do not use for mainnet value.
+
+## Security Notes
+
+- The vault only accepts callbacks from the cUSDT contract address.
+- Unlock time is enforced by block timestamp.
+- Amounts are encrypted; addresses and timestamps are public.
+- Always validate deployments and ABIs before using the UI.
+
+## Future Roadmap
+
+- Multiple concurrent stakes per address.
+- Partial withdrawals and top-ups without reset.
+- Reward module integration (configurable emissions).
+- Additional confidential assets beyond cUSDT.
+- Improved UI analytics and position history.
+- Optional role-based minting for test networks.
+- Formal audit and threat modeling pass.
+
+## License
+
+BSD-3-Clause-Clear. See `LICENSE`.
